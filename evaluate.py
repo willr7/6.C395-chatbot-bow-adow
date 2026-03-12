@@ -1,29 +1,63 @@
 """
 LLM-as-judge evaluator for the BPS School Navigator chatbot.
 
-Uses G-Eval style evaluation: the judge LLM reasons step-by-step (CoT) before
-scoring each metric. Scores are 0–5, normalized to 0.0–1.0 in the report.
+HOW IT WORKS
+------------
+This script uses a separate LLM call to score chatbot responses — the same
+model that powers the chatbot acts as a "judge" here. For each test case, the
+judge is given the conversation history, any retrieved school context, and the
+bot's response, then asked to reason step-by-step before assigning a score
+(G-Eval style / Chain-of-Thought). Scores are 0–5, normalized to 0.0–1.0.
 
-Metrics
+METRICS
 -------
-- answer_relevancy   : Does the response address what the user asked?
-- faithfulness       : Does the response only claim things in the retrieved context?
-- task_completion    : Is the bot making meaningful progress toward finding a school?
-- intake_adherence   : Did the bot collect grade + neighborhood before recommending?
+- answer_relevancy   : Does the response address what the user actually asked?
+- faithfulness       : Does the response only claim things found in the retrieved
+                       school context? (catches hallucinated phone numbers,
+                       programs, class sizes, etc.)
+- task_completion    : Is the bot making meaningful progress toward helping the
+                       family find a school?
+- intake_adherence   : Did the bot ask for grade + neighborhood before recommending
+                       specific schools? (enforces the 3-phase intake protocol)
 
-Usage
+SETUP
 -----
-  python evaluate.py                        # run all built-in test cases
-  python evaluate.py --case <name>          # run a single named test case
+Requires a .env file in the repo root with your HuggingFace token:
+  HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-Output
+USAGE
+-----
+  python evaluate.py                                      # run all 5 built-in test cases
+  python evaluate.py --case hallucination                 # run one case by name
+  python evaluate.py --metric faithfulness                # run one metric across all cases
+  python evaluate.py --file conversation_logs/abc123.json # evaluate full conversation holistically
+
+Available test cases:
+  good_intake                  — bot correctly collects info before recommending
+  good_faithful                — recommendation grounded in real context data
+  hallucination                — bot makes up facts not in the context (should score low)
+  skips_intake                 — bot recommends without asking grade/neighborhood (should score low)
+  mixed_helpful_no_disclaimer  — helpful but missing the lottery disclaimer
+
+TO ADD A NEW TEST CASE
+----------------------
+Add a TestCase to the list returned by build_test_cases(). Each case needs:
+  - name            : a short unique identifier
+  - conversation    : list of Turn("user"/"bot", "message") objects
+  - retrieved_context: the school data that would have been retrieved (paste
+                       rows from bps_clean.csv as plain text, or "" if none)
+  - response        : the bot response you want to evaluate
+  - notes           : (optional) what you expect the scores to look like
+
+OUTPUT
 ------
-  Prints a per-case, per-metric table to stdout.
-  Writes full reasoning to evaluate_results.json.
+  Prints a per-case, per-metric score table to stdout.
+  Writes full judge reasoning to evaluate_results.json.
 """
 
 import argparse
 import json
+import os
 import re
 from dataclasses import dataclass, field, asdict
 
@@ -33,6 +67,7 @@ from config import BASE_MODEL, HF_TOKEN
 
 # ── Metric definitions ────────────────────────────────────────────────────────
 
+# Criteria for evaluating a single response (used by built-in test cases)
 METRICS = {
     "answer_relevancy": {
         "description": "Answer Relevancy",
@@ -76,6 +111,50 @@ METRICS = {
     },
 }
 
+# Criteria for evaluating a full conversation holistically (used with --file)
+HOLISTIC_METRICS = {
+    "answer_relevancy": {
+        "description": "Answer Relevancy",
+        "criteria": (
+            "Across the full conversation, did the bot consistently address what "
+            "users asked? Consider all of the bot's responses collectively — did it "
+            "stay on topic, avoid tangents, and respond to what was actually asked?"
+        ),
+    },
+    "faithfulness": {
+        "description": "Faithfulness (Anti-Hallucination)",
+        "criteria": (
+            "Across ALL of the bot's responses in this conversation, did it only "
+            "claim facts explicitly present in the retrieved school context? "
+            "Any specific claim not found in the context — including school names, "
+            "addresses, phone numbers, enrollment figures, program details, class sizes, "
+            "schedules, or registration deadlines — counts as a hallucination and must "
+            "result in a low score. If no context was provided, the bot must not state "
+            "any specific school facts at all; doing so is an automatic score of 0-1. "
+            "A score of 4 or 5 requires zero hallucinated facts across the entire conversation."
+        ),
+    },
+    "task_completion": {
+        "description": "Task Completion",
+        "criteria": (
+            "Did the conversation as a whole successfully help the family find and "
+            "understand their school options? A high score means the bot collected "
+            "the right information, provided useful recommendations, and left the "
+            "family with clear next steps. A low score means the conversation ended "
+            "without meaningful progress."
+        ),
+    },
+    "intake_adherence": {
+        "description": "Intake Adherence",
+        "criteria": (
+            "Did the bot properly collect both (1) the child's grade level and "
+            "(2) the family's neighborhood or zip code before recommending specific "
+            "schools? Review the full conversation — if the bot made recommendations "
+            "before obtaining both pieces of information, that is a protocol violation."
+        ),
+    },
+}
+
 JUDGE_PROMPT = """\
 You are evaluating a response from the BPS School Navigator chatbot, which helps \
 Boston families find public schools for their children.
@@ -109,6 +188,36 @@ Reasoning: <your step-by-step reasoning>
 Score: <integer from 0 to 5>
 """
 
+HOLISTIC_JUDGE_PROMPT = """\
+You are evaluating the BPS School Navigator chatbot's overall performance across \
+a complete conversation with a Boston family looking for public schools.
+
+=== FULL CONVERSATION ===
+{conversation}
+
+=== RETRIEVED SCHOOL CONTEXT ===
+{context}
+
+=== EVALUATION TASK ===
+Metric: {metric_name}
+Criteria: {criteria}
+
+Evaluate the bot's overall behavior across the ENTIRE conversation based on the \
+criteria above. Consider all of the bot's responses collectively, not just one turn.
+
+After your reasoning, give a score from 0 to 5:
+  0 = Completely fails the criteria
+  1 = Very poor
+  2 = Below expectations
+  3 = Acceptable
+  4 = Good
+  5 = Excellent / fully meets criteria
+
+Respond in exactly this format:
+Reasoning: <your step-by-step reasoning>
+Score: <integer from 0 to 5>
+"""
+
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
@@ -122,9 +231,10 @@ class Turn:
 class TestCase:
     name: str
     conversation: list[Turn]
-    retrieved_context: str          # school data that was retrieved for this turn
-    response: str                   # the bot's final response being evaluated
+    retrieved_context: str          # school data that was retrieved
+    response: str                   # single response to evaluate (empty if holistic=True)
     notes: str = ""                 # human notes on what to expect
+    holistic: bool = False          # if True, evaluate the full conversation instead of a single response
 
 
 @dataclass
@@ -174,17 +284,26 @@ class Evaluator:
         conversation: list[Turn],
         retrieved_context: str,
         response: str,
+        holistic: bool = False,
     ) -> MetricResult:
-        metric = METRICS[metric_key]
+        metric = (HOLISTIC_METRICS if holistic else METRICS)[metric_key]
         context_text = retrieved_context if retrieved_context.strip() else "(no context retrieved)"
 
-        prompt = JUDGE_PROMPT.format(
-            conversation=self._format_conversation(conversation),
-            context=context_text,
-            response=response,
-            metric_name=metric["description"],
-            criteria=metric["criteria"],
-        )
+        if holistic:
+            prompt = HOLISTIC_JUDGE_PROMPT.format(
+                conversation=self._format_conversation(conversation),
+                context=context_text,
+                metric_name=metric["description"],
+                criteria=metric["criteria"],
+            )
+        else:
+            prompt = JUDGE_PROMPT.format(
+                conversation=self._format_conversation(conversation),
+                context=context_text,
+                response=response,
+                metric_name=metric["description"],
+                criteria=metric["criteria"],
+            )
 
         messages = [{"role": "user", "content": prompt}]
         output = self.client.chat_completion(messages=messages, max_tokens=512)
@@ -208,6 +327,7 @@ class Evaluator:
                 conversation=case.conversation,
                 retrieved_context=case.retrieved_context,
                 response=case.response,
+                holistic=case.holistic,
             )
 
         return result
@@ -385,20 +505,52 @@ def save_results(results: list[EvalResult], path: str = "evaluate_results.json")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def load_cases_from_file(path: str) -> list[TestCase]:
+    """
+    Load a conversation log file saved by app.py as a single holistic test case.
+
+    The full conversation (all user and bot turns) is passed to the judge, which
+    evaluates the bot's overall behavior across the entire conversation rather than
+    scoring each response individually.
+
+    The file should be a JSON object with:
+      - conversation : list of {"role": "user"/"assistant"/"bot", "content": "..."}
+      - retrieved_context : string (can be empty)
+      - name : (optional) identifier
+    """
+    with open(path) as f:
+        data = json.load(f)
+
+    name = data.get("name", os.path.splitext(os.path.basename(path))[0])
+    turns = [Turn(role=t["role"], content=t["content"]) for t in data["conversation"]]
+
+    return [TestCase(
+        name=name,
+        conversation=turns,
+        retrieved_context=data.get("retrieved_context", ""),
+        response="",
+        holistic=True,
+    )]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate the BPS chatbot.")
-    parser.add_argument("--case", type=str, default=None, help="Run a single named test case.")
+    parser.add_argument("--case", type=str, default=None, help="Run a single named built-in test case.")
     parser.add_argument("--metric", type=str, default=None, help="Run a single metric only.")
+    parser.add_argument("--file", type=str, default=None, help="Path to a conversation log file from app.py.")
     args = parser.parse_args()
 
     evaluator = Evaluator()
-    test_cases = build_test_cases()
 
-    if args.case:
-        test_cases = [c for c in test_cases if c.name == args.case]
-        if not test_cases:
-            print(f"No test case named '{args.case}'. Available: {[c.name for c in build_test_cases()]}")
-            return
+    if args.file:
+        test_cases = load_cases_from_file(args.file)
+    else:
+        test_cases = build_test_cases()
+        if args.case:
+            test_cases = [c for c in test_cases if c.name == args.case]
+            if not test_cases:
+                print(f"No test case named '{args.case}'. Available: {[c.name for c in build_test_cases()]}")
+                return
 
     metrics_to_run = [args.metric] if args.metric and args.metric in METRICS else None
 

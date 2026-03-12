@@ -18,48 +18,75 @@ Example Usage:
     # http://localhost:7860
 """
 
+import json
+import os
+import uuid
+from datetime import datetime
+
 import gradio as gr
 from src.chat import Chatbot
+
+LOGS_DIR = "conversation_logs"
+
+
+def extract_text(content) -> str:
+    """Extract plain text from Gradio 5.x content, which may be a string or a list of content objects."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(item.get("text", "") for item in content if isinstance(item, dict))
+    return str(content)
+
+
+def log_conversation(conversation_id: str, history: list, message: str, response: str):
+    """
+    Save the full conversation to a per-session JSON log file after each turn.
+
+    Each file in conversation_logs/ is named <conversation_id>.json and contains
+    the full conversation as plain text, ready to pass to evaluate.py via --file.
+
+    File format:
+    {
+      "name": "<conversation_id>",
+      "conversation": [
+        {"role": "user", "content": "..."},
+        {"role": "assistant", "content": "..."},
+        ...
+      ],
+      "retrieved_context": ""
+    }
+    """
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    path = os.path.join(LOGS_DIR, f"{conversation_id}.json")
+
+    turns = []
+    for turn in history:
+        turns.append({"role": turn["role"], "content": extract_text(turn["content"])})
+    turns.append({"role": "user", "content": message})
+    turns.append({"role": "assistant", "content": response})
+
+    data = {
+        "name": conversation_id,
+        "timestamp": datetime.now().isoformat(),
+        "conversation": turns,
+        "retrieved_context": "",  # update this once RAG is implemented
+    }
+
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
 
 def create_chatbot():
     """
     Creates and configures the chatbot interface.
     """
     chatbot = Chatbot()
-    
+    conversation_id = str(uuid.uuid4())[:8]
+
     def chat(message, history):
-        """
-        TODO:Generate a response for the current message in a Gradio chat interface.
-        
-        This function is called by Gradio's ChatInterface every time a user sends a message.
-        You only need to generate and return the assistant's response - Gradio handles the
-        chat display and history management automatically.
-
-        Args:
-            message (str): The current message from the user
-            history (list): List of previous message pairs, where each pair is
-                           [user_message, assistant_message]
-                           Example:
-                           [
-                               ["What schools offer Spanish?", "The Hernandez School..."],
-                               ["Where is it located?", "The Hernandez School is in Roxbury..."]
-                           ]
-
-        Returns:
-            str: The assistant's response to the current message.
-
-
-        Note:
-            - Gradio automatically:
-                - Displays the user's message
-                - Displays your returned response
-                - Updates the chat history
-                - Maintains the chat interface
-            - You only need to:
-                - Generate an appropriate response to the current message
-                - Return that response as a string
-        """
-        return chatbot.get_response(message, history)
+        response = chatbot.get_response(message, history)
+        log_conversation(conversation_id, history, message, response)
+        return response
 
     
     
