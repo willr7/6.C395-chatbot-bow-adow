@@ -59,18 +59,19 @@ def create_chatbot():
                 - Generate an appropriate response to the current message
                 - Return that response as a string
         """
-        # TODO: Generate and return response
-        pass
+        return chatbot.get_response(message, history)
 
     
     
     # Create Gradio interface. Customize the interface however you'd like!
     demo = gr.ChatInterface(
         chat,
-        title="6.C395",
-        description="Ask me anything about [topic]! Since I am a free tier chatbot, I may give a 503 error when I'm busy. If that happens, please try again a few seconds later.",
+        title="BPS School Navigator",
+        description="I help Boston families find the right public school for their children. Since I am a free tier chatbot, I may give a 503 error when I'm busy. If that happens, please try again a few seconds later.",
         examples=[
-            "What options are available for someone in my situation?"
+            "Hi, I'm looking for a school for my child who is starting kindergarten next year.",
+            "What schools in Roxbury serve middle schoolers?",
+            "My child has an IEP — which schools have special education programs?",
         ]
     )
     
