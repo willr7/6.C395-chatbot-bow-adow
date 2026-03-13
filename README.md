@@ -23,6 +23,7 @@ Note: We encourage you to use AI tools (like Cursor or LLMs) to help you on this
 ## Setup
 
 1. Make a virtual environment and install the required dependencies:
+
 ```bash
 python -m venv venv
 source venv/bin/activate
@@ -35,6 +36,7 @@ pip install -r requirements.txt
    - Click on your profile, then "Access Tokens" and make a new token
    - Make a .env file with `HF_TOKEN=<insert your token here>`
    - Now, log in to Hugging Face in the terminal as well:
+
    ```bash
    huggingface-cli login
    ```
@@ -42,8 +44,6 @@ pip install -r requirements.txt
 3. Choose a base model:
    - In config.py, set the BASE_MODEL variable to your base model of choice from HuggingFace.
    - Keep in mind it's better to have a small, lightweight model if you plan on finetuning.
-
-
 
 ## Repository Organization
 
@@ -59,6 +59,7 @@ pip install -r requirements.txt
 ├── samhsa_chatbot_conversation_example.txt     # Example conversation we might want to have with the Option 3 chatbot
 └── src/
     └── chat.py        # Chatbot class (implement this)
+    └── rag.py        # RAG functions (implement this)
 ```
 
 ### Key Files:
@@ -68,6 +69,11 @@ pip install -r requirements.txt
 - **chat.py**: Contains the `Chatbot` class where you'll implement:
   - `format_prompt`: Format user input into proper prompts
   - `get_response`: Generate responses using the model
+
+- **rag.py**: Contains the necessary functions for RAG:
+  - `processing_data`
+  - `embed`
+  - `build_faiss_index`
 
 - **config.py**: Contains the `BASE_MODEL` and `MY_MODEL` variables, which are names of models on HuggingFace. Update the `MY_MODEL` variable if you create a new model and upload it to the HuggingFace Hub.
 
@@ -93,10 +99,10 @@ pip install -r requirements.txt
    - Verify everything works before deployment
 
 4. After you update the code, you can run the chatbot locally:
+
 ```bash
 python app.py
 ```
-
 
 ## Deploying to Hugging Face
 
@@ -112,6 +118,7 @@ To deploy your chatbot as a free web interface using Hugging Face Spaces:
 
 2. Prepare your files:
    Your repository should already have all needed files:
+
    ```
    6.c395-chatbot/
    ├── README.md           # Description of your chatbot
@@ -121,6 +128,7 @@ To deploy your chatbot as a free web interface using Hugging Face Spaces:
    ```
 
 3. Push your code to the Space:
+
    ```bash
    git init
    git add .
@@ -133,7 +141,6 @@ To deploy your chatbot as a free web interface using Hugging Face Spaces:
    - Go to Files.
    - Go to Settings.
    - Under secrets, add HF_TOKEN.
-   
 
 5. Important Free Tier Considerations:
    - The default model (meta-llama/Llama-3.1-8B-Instruct) runs via HuggingFace's Inference Providers, not on your Space's CPU. Your Space just hosts the Gradio UI.
@@ -156,4 +163,3 @@ To deploy your chatbot as a free web interface using Hugging Face Spaces:
    - Remember free tier has limited resources. Sometimes if you get a 503 error it means the server is overloaded. Just try again a few seconds later.
 
 Your chatbot should now be accessible to anyone through their web browser!
-
