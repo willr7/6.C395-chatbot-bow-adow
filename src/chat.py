@@ -101,7 +101,7 @@ class Chatbot:
         for turn in (history or []):
             messages.append({"role": turn["role"], "content": turn["content"]})
 
-        messages.append({"role": "user", "content": user_input})
+        messages.append({"role": "user", "content": user_input.lower()})
         return messages
 
     def get_response(self, user_input, chunks, index, history=None):
