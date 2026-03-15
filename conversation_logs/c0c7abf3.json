@@ -1,0 +1,15 @@
+{
+  "name": "c0c7abf3",
+  "timestamp": "2026-03-12T19:44:25.412740",
+  "conversation": [
+    {
+      "role": "user",
+      "content": "hi what is your name!"
+    },
+    {
+      "role": "assistant",
+      "content": "I'm so glad you're reaching out for help! My name is Bitty, but I'm more commonly known as the \"BPS School Navigator.\" As your assistant, I'm here to guide you through the process of finding the right public school for your child in Boston. I'm happy to chat with you and answer any questions you have. Is there something specific on your mind, or would you like to start by going through the 3-phase intake process?"
+    }
+  ],
+  "retrieved_context": ""
+}

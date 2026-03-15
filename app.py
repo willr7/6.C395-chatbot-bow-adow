@@ -25,6 +25,7 @@ from datetime import datetime
 
 import gradio as gr
 from src.chat import Chatbot
+from src.rag import embed, build_faiss_index, processing_data
 
 LOGS_DIR = "conversation_logs"
 
@@ -75,16 +76,24 @@ def log_conversation(conversation_id: str, history: list, message: str, response
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
+def create_index():
+    """Creates the index from the processed data and returns chunks of data + index."""
+    
+    chunks = processing_data() # List of school descriptions
+    embeddings = embed(chunks) # Convert to vectors
+    index = build_faiss_index(embeddings)
+    return chunks, index
 
-def create_chatbot():
+def create_chatbot(chunks, index):
     """
     Creates and configures the chatbot interface.
     """
     chatbot = Chatbot()
     conversation_id = str(uuid.uuid4())[:8]
 
+
     def chat(message, history):
-        response = chatbot.get_response(message, history)
+        response = chatbot.get_response(message, chunks, index, history)
         log_conversation(conversation_id, history, message, response)
         return response
 
@@ -105,5 +114,6 @@ def create_chatbot():
     return demo
 
 if __name__ == "__main__":
-    demo = create_chatbot()
+    chunks, index = create_index()
+    demo = create_chatbot(chunks, index)
     demo.launch()

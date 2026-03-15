@@ -1,5 +1,6 @@
 from huggingface_hub import InferenceClient
 from config import BASE_MODEL, MY_MODEL, HF_TOKEN
+from .rag import embed
 
 SYSTEM_PROMPT = """
 You are the "BPS School Navigator," an assistant that helps Boston families find the right public school for their children. You are empathetic, clear, and accurate. You help parents move from overwhelmed to empowered.
@@ -66,10 +67,10 @@ class Chatbot:
     """
 
     def __init__(self):
-        model_id = MY_MODEL if MY_MODEL else BASE_MODEL
+        model_id = BASE_MODEL
         self.client = InferenceClient(model=model_id, token=HF_TOKEN)
 
-    def format_prompt(self, user_input, history=None):
+    def format_prompt(self, user_input, chunks, index, history=None):
         """
         Build the messages list for the model, including conversation history.
 
@@ -80,7 +81,21 @@ class Chatbot:
         Returns:
             list[dict]: Messages in OpenAI chat format.
         """
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        user_embedding = embed(user_input)
+        user_embedding = user_embedding.reshape(1, -1)  # Now shape is (1, vector_dim)
+        
+        #RAG search for top indeces of chunks to the user prompt
+        _, indices_top_chunks = index.search(user_embedding, k=5)
+
+        #retrieve chunk text
+        top_chunks = [chunks[i] for i in indices_top_chunks[0]]  # convert indices to text
+        #print top_chunks for testing
+
+        prompt = SYSTEM_PROMPT + "\nRelevant information:\n"
+        #add chunks to prompt
+        prompt += "\n".join(top_chunks)
+        messages = [{"role": "system", "content": prompt}]
 
         for turn in (history or []):
             messages.append({"role": turn["role"], "content": turn["content"]})
@@ -88,22 +103,22 @@ class Chatbot:
         messages.append({"role": "user", "content": user_input})
         return messages
 
-    def get_response(self, user_input, history=None):
+    def get_response(self, user_input, chunks, index, history=None):
         """
         Generate a response to the user's message.
 
         Args:
             user_input (str): The current message from the user.
+            chunks (list): List of strings of text chunks.
+            index (vector database): vector database of embedded chunks.
             history (list): Gradio-style history — list of [user_msg, bot_msg] pairs.
 
         Returns:
             str: The chatbot's response.
         """
-        # TODO: Inject relevant school data from bps_clean.csv as context.
-        # Once the user has provided their grade and neighborhood (via the intake
-        # protocol), filter bps_clean.csv for matching schools and append the
-        # results as a context message before calling the model. This is the RAG
-        # step that grounds the chatbot's recommendations in real data.
-        messages = self.format_prompt(user_input, history)
+        messages = self.format_prompt(user_input, chunks, index, history)
         output = self.client.chat_completion(messages=messages, max_tokens=512)
         return output.choices[0].message.content
+
+
+
