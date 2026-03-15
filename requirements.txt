@@ -1,4 +1,4 @@
-torch>=2.1.0
+torch>=2.4.0
 transformers>=4.34.0
 datasets>=2.14.0
 accelerate>=0.24.0
@@ -18,3 +18,5 @@ beautifulsoup4
 pandas 
 webdriver-manager
 lxml
+faiss-cpu
+sentence-transformers
