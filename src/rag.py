@@ -12,7 +12,7 @@ def processing_data():
 
     # Convert each row into a single sentence like "A: value; B: value; C: value"
     chunks = [
-        "; ".join(f"{col}: {row[col]}" for col in df.columns)
+        "; ".join(f"{col}: {row[col].lower()}" for col in df.columns)
         for _, row in df.iterrows()
     ]
     return chunks  # List of sentences, one per row
