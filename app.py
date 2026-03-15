@@ -78,7 +78,7 @@ def log_conversation(conversation_id: str, history: list, message: str, response
 
 def create_index():
     """Creates the index from the processed data and returns chunks of data + index."""
-    
+
     chunks = processing_data() # List of school descriptions
     embeddings = embed(chunks) # Convert to vectors
     index = build_faiss_index(embeddings)
@@ -105,7 +105,7 @@ def create_chatbot(chunks, index):
         title="BPS School Navigator",
         description="I help Boston families find the right public school for their children. Since I am a free tier chatbot, I may give a 503 error when I'm busy. If that happens, please try again a few seconds later.",
         examples=[
-            "Hi, I'm looking for a school for my child who is starting kindergarten next year.",
+            "Hi, I'm looking for a school for my child who is starting school next year.",
             "What schools in Roxbury serve middle schoolers?",
             "My child has an IEP — which schools have special education programs?",
         ]

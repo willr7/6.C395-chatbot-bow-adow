@@ -312,7 +312,7 @@ class Evaluator:
         score_raw, reasoning = self._parse_score(raw_text)
         return MetricResult(
             score_raw=score_raw,
-            score_normalized=round(score_raw / 5.0, 2),
+            score_normalized=score_raw / 5.0,
             reasoning=reasoning,
         )
 
